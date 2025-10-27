@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -240,9 +242,26 @@ func TokenAuth() func(c *gin.Context) {
 			return
 		}
 
+		// 先检查系统全局的 SSRF 保护 IP 限制
+		fetchSetting := system_setting.GetFetchSetting()
+		clientIp := c.ClientIP()
+		ip := net.ParseIP(clientIp)
+		if ip != nil && fetchSetting.EnableSSRFProtection {
+			protection := &common.SSRFProtection{
+				AllowPrivateIp: fetchSetting.AllowPrivateIp,
+				IpFilterMode:   fetchSetting.IpFilterMode,
+				IpList:         fetchSetting.IpList,
+			}
+
+			if !protection.IsIPAccessAllowed(ip) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "您的 IP 不在系统允许访问的列表中")
+				return
+			}
+		}
+
+		// 再检查 token 自身的 IP 限制
 		allowIpsMap := token.GetIpLimitsMap()
 		if len(allowIpsMap) != 0 {
-			clientIp := c.ClientIP()
 			if _, ok := allowIpsMap[clientIp]; !ok {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "您的 IP 不在令牌允许访问的列表中")
 				return

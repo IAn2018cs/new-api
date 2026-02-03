@@ -168,13 +168,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
 		if priceData.FreeModel {
-			logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
-		} else {
-			newAPIError = service.PreConsumeQuota(c, priceData.QuotaToPreConsume, relayInfo)
-			if newAPIError != nil {
-				return
-			}
-		}
+            logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
+        } else {
+            newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
+            if newAPIError != nil {
+                return
+            }
+        }
 
 		defer func() {
 			// Only return quota if downstream failed and quota was actually pre-consumed
@@ -329,6 +329,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
 	if openaiErr == nil {
+		return false
+	}
+	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
 	if types.IsChannelError(openaiErr) {
@@ -532,6 +535,9 @@ func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.Tas
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
 	if taskErr == nil {
+		return false
+	}
+	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
 	if retryTimes <= 0 {

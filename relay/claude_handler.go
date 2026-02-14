@@ -41,6 +41,11 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
+	// 对于非 Anthropic 渠道的 count_tokens 请求，进行本地 token 计数
+	if info.RelayFormat == types.RelayFormatClaudeCountTokens && info.ApiType != constant.APITypeAnthropic {
+		return handleLocalCountTokens(c, info, request)
+	}
+
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
@@ -198,3 +203,29 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	service.PostClaudeConsumeQuota(c, info, usage.(*dto.Usage))
 	return nil
 }
+
+// handleLocalCountTokens 处理非 Anthropic 渠道的本地 token 计数
+// 当使用非 Claude 渠道时，无法调用 Anthropic 的 count_tokens API，
+// 因此使用本地 tokenizer 进行估算
+func handleLocalCountTokens(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) *types.NewAPIError {
+	// 标记为本地计数
+	common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
+
+	// 获取 token 计数元信息
+	meta := request.GetTokenCountMeta()
+	if meta == nil {
+		return types.NewError(fmt.Errorf("failed to get token count meta"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	// 使用本地 tokenizer 计算 token 数量
+	inputTokens := service.CountTextToken(meta.CombineText, request.Model)
+
+	// 构造 Claude count_tokens 响应格式
+	response := map[string]any{
+		"input_tokens": inputTokens,
+	}
+
+	c.JSON(http.StatusOK, response)
+	return nil
+}
+
